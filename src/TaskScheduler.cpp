@@ -18,8 +18,8 @@
 
 #include <assert.h>
 
-#include "TaskScheduler.h"
-#include "LockLessMultiReadPipe.h"
+#include "al2o3_enki/TaskScheduler.h"
+#include "al2o3_enki/LockLessMultiReadPipe.h"
 
 #include <algorithm>
 
@@ -51,6 +51,13 @@ static const uint32_t MAX_NUM_INITIAL_PARTITIONS = 8;
 // each software thread gets it's own copy of gtl_threadNum, so this is safe to use as a static variable
 static thread_local uint32_t                             gtl_threadNum       = 0;
 
+static void* DefaultAlloc(void*, size_t size) {
+	return malloc(size);
+}
+static void DefaultFree(void*, void* alloc) {
+	free(alloc);
+}
+
 namespace enki 
 {
     struct SubTaskSet
@@ -70,8 +77,8 @@ namespace enki
 
     class PinnedTaskList : public LocklessMultiWriteIntrusiveList<IPinnedTask> {};
 
-    semaphoreid_t* SemaphoreCreate();
-    void SemaphoreDelete( semaphoreid_t* pSemaphore_ );
+    semaphoreid_t* SemaphoreCreate(TaskScheduler* owner);
+    void SemaphoreDelete( TaskScheduler* owner, semaphoreid_t* pSemaphore_ );
     void SemaphoreWait(   semaphoreid_t& semaphoreid );
     void SemaphoreSignal( semaphoreid_t& semaphoreid, int32_t countWaiting );
 }
@@ -171,18 +178,29 @@ void TaskScheduler::StartThreads()
         return;
     }
 
+
     for( int priority = 0; priority < TASK_PRIORITY_NUM; ++priority )
     {
-        m_pPipesPerThread[ priority ]          = new TaskPipe[ m_NumThreads ];
-        m_pPinnedTaskListPerThread[ priority ] = new PinnedTaskList[ m_NumThreads ];
+				m_pPipesPerThread[ priority ] = (TaskPipe*)m_allocFunc(m_userData, sizeof(TaskPipe) * m_NumThreads);
+				m_pPinnedTaskListPerThread[ priority ] = (PinnedTaskList*)m_allocFunc(m_userData, sizeof(PinnedTaskList) * m_NumThreads);
+        for(uint32_t i = 0;i < m_NumThreads;++i)
+				{
+        	new (m_pPipesPerThread[ priority ] + i) TaskPipe();
+					new (m_pPinnedTaskListPerThread[ priority ] + i)PinnedTaskList();
+				}
     }
 
-    m_pNewTaskSemaphore = SemaphoreCreate();
+    m_pNewTaskSemaphore = SemaphoreCreate(this);
 
     // we create one less thread than m_NumThreads as the main thread counts as one
-    m_pThreadArgStore   = new ThreadArgs[m_NumThreads];
-    m_pThreads          = new std::thread*[m_NumThreads];
-    m_pThreadArgStore[0].threadNum      = 0;
+    m_pThreadArgStore   = (ThreadArgs*)m_allocFunc(m_userData, sizeof(ThreadArgs) * m_NumThreads);
+		m_pThreads          = (std::thread**)m_allocFunc(m_userData, sizeof(std::thread*) * m_NumThreads);
+		for(uint32_t i = 0;i < m_NumThreads;++i) {
+			new (m_pThreadArgStore + i) ThreadArgs();
+		}
+		memset(m_pThreads, 0, sizeof(std::thread*) * m_NumThreads);
+
+		m_pThreadArgStore[0].threadNum      = 0;
     m_pThreadArgStore[0].pTaskScheduler = this;
     m_NumThreadsRunning = 1; // account for main thread
     m_bRunning = 1;
@@ -191,7 +209,8 @@ void TaskScheduler::StartThreads()
     {
         m_pThreadArgStore[thread].threadNum      = thread;
         m_pThreadArgStore[thread].pTaskScheduler = this;
-        m_pThreads[thread] = new std::thread( TaskingThreadFunction, m_pThreadArgStore[thread] );
+        m_pThreads[thread] = (std::thread*) m_allocFunc(m_userData, sizeof(std::thread));
+				new (m_pThreads[thread]) std::thread( TaskingThreadFunction, m_pThreadArgStore[thread] );
         ++m_NumThreadsRunning;
     }
 
@@ -231,17 +250,21 @@ void TaskScheduler::StopThreads( bool bWait_ )
         for( uint32_t thread = 1; thread < m_NumThreads; ++thread )
         {
             m_pThreads[thread]->detach();
-            delete m_pThreads[thread];
+            m_pThreads[thread]->~thread();
+            m_freeFunc(m_userData, m_pThreads[thread]);
         }
+				m_freeFunc(m_userData, m_pThreads);
+				m_pThreads = 0;
 
-        m_NumThreads = 0;
-        delete[] m_pThreadArgStore;
-        delete[] m_pThreads;
-        m_pThreadArgStore = 0;
-        m_pThreads = 0;
+				for( uint32_t i = 0; i < m_NumThreads;++i)
+				{
+					m_pThreadArgStore->~ThreadArgs();
+				}
+				m_freeFunc(m_userData, m_pThreadArgStore);
+        m_pThreadArgStore = nullptr;
 
-        SemaphoreDelete( m_pNewTaskSemaphore );
-        m_pNewTaskSemaphore = 0;
+        SemaphoreDelete( this, m_pNewTaskSemaphore );
+        m_pNewTaskSemaphore = nullptr;
 
         m_bHaveThreads = false;
         m_NumThreadsWaiting = 0;
@@ -249,11 +272,18 @@ void TaskScheduler::StopThreads( bool bWait_ )
 
         for( int priority = 0; priority < TASK_PRIORITY_NUM; ++priority )
         {
-            delete[] m_pPipesPerThread[ priority ];
-            m_pPipesPerThread[ priority ] = NULL;
-            delete[] m_pPinnedTaskListPerThread[ priority ];
-            m_pPinnedTaskListPerThread[ priority ] = NULL;
+        	for(uint32_t i = 0;i < m_NumThreads;++i) {
+						m_pPipesPerThread[ priority ]->~TaskPipe();
+						m_pPinnedTaskListPerThread[priority]->~PinnedTaskList();
+        	}
+
+          m_freeFunc(m_userData, m_pPipesPerThread[ priority ]);
+					m_freeFunc(m_userData, m_pPinnedTaskListPerThread[ priority ]);
+					m_pPipesPerThread[ priority ] = nullptr;
+					m_pPinnedTaskListPerThread[ priority ] = nullptr;
         }
+
+				m_NumThreads = 0;
     }
 }
 
@@ -510,7 +540,7 @@ uint32_t TaskScheduler::GetThreadNum() const
 }
 
 
-TaskScheduler::TaskScheduler()
+TaskScheduler::TaskScheduler(AllocFunc allocFunc, FreeFunc freeFunc, void* userData)
         : m_pPipesPerThread()
         , m_pPinnedTaskListPerThread()
         , m_NumThreads(0)
@@ -521,8 +551,14 @@ TaskScheduler::TaskScheduler()
         , m_NumThreadsWaiting(0)
         , m_NumPartitions(0)
         , m_bHaveThreads(false)
+        , m_allocFunc(allocFunc)
+        , m_freeFunc(freeFunc)
+        , m_userData(userData)
 {
     memset(&m_ProfilerCallbacks, 0, sizeof(m_ProfilerCallbacks));
+		if(m_allocFunc == nullptr) m_allocFunc = &DefaultAlloc;
+		if(m_freeFunc == nullptr) m_freeFunc = &DefaultFree;
+
 }
 
 TaskScheduler::~TaskScheduler()
@@ -665,16 +701,17 @@ namespace enki
 
 namespace enki
 {
-    semaphoreid_t* SemaphoreCreate()
+    semaphoreid_t* SemaphoreCreate(TaskScheduler* owner)
     {
-        semaphoreid_t* pSemaphore = new semaphoreid_t;
+        semaphoreid_t* pSemaphore = (semaphoreid_t*) owner->m_allocFunc(owner->m_userData, sizeof(semaphoreid_t));
+        memset(pSemaphore, 0, sizeof(semaphoreid_t));
         SemaphoreCreate( *pSemaphore );
         return pSemaphore;
     }
 
-    void SemaphoreDelete( semaphoreid_t* pSemaphore_ )
+    void SemaphoreDelete( TaskScheduler* owner, semaphoreid_t* pSemaphore_)
     {
         SemaphoreClose( *pSemaphore_ );
-        delete pSemaphore_;
+        owner->m_freeFunc(owner->m_userData, pSemaphore_);
     }
 }

@@ -16,15 +16,19 @@
 //    misrepresented as being the original software.
 // 3. This notice may not be removed or altered from any source distribution.
 
-#include "TaskScheduler_c.h"
-#include "TaskScheduler.h"
+#include "al2o3_enki/TaskScheduler_c.h"
+#include "al2o3_enki/TaskScheduler.h"
 
 #include <assert.h>
+#include <memory.h>
 
 using namespace enki;
 
-struct enkiTaskScheduler : TaskScheduler
+struct enkiTaskScheduler : public TaskScheduler
 {
+	using TaskScheduler::m_allocFunc;
+	using TaskScheduler::m_freeFunc;
+	using TaskScheduler::m_userData;
 };
 
 struct enkiTaskSet : ITaskSet
@@ -38,6 +42,8 @@ struct enkiTaskSet : ITaskSet
 
     enkiTaskExecuteRange taskFun;
     void* pArgs;
+
+		enkiTaskScheduler* owner;
 };
 
 struct enkiPinnedTask : IPinnedTask
@@ -52,11 +58,25 @@ struct enkiPinnedTask : IPinnedTask
 
     enkiPinnedTaskExecute taskFun;
     void* pArgs;
+
+		enkiTaskScheduler* owner;
 };
 
-enkiTaskScheduler* enkiNewTaskScheduler()
+static void* DefaultAlloc(void*, size_t size) {
+	return malloc(size);
+}
+static void DefaultFree(void*, void* alloc) {
+	free(alloc);
+}
+
+enkiTaskScheduler* enkiNewTaskScheduler(enkiAllocFunc allocFunc, enkiFreeFunc freeFunc, void* userData)
 {
-    enkiTaskScheduler* pETS = new enkiTaskScheduler();
+		if(allocFunc == nullptr) allocFunc = &DefaultAlloc;
+		if(freeFunc == nullptr) freeFunc = &DefaultFree;
+
+    enkiTaskScheduler* pETS = (enkiTaskScheduler*) allocFunc(userData, sizeof(enkiTaskScheduler));
+    new(pETS) enkiTaskScheduler();
+
     return pETS;
 }
 
@@ -72,17 +92,21 @@ void enkiInitTaskSchedulerNumThreads(  enkiTaskScheduler* pETS_, uint32_t numThr
 
 void enkiDeleteTaskScheduler( enkiTaskScheduler* pETS_ )
 {
-    delete pETS_;
+		((TaskScheduler*)pETS_)->~TaskScheduler();
+		pETS_->m_freeFunc(pETS_->m_userData, pETS_);
 }
 
 enkiTaskSet* enkiCreateTaskSet( enkiTaskScheduler* pETS_, enkiTaskExecuteRange taskFunc_  )
 {
-    return new enkiTaskSet( taskFunc_ );
+		enkiTaskSet* taskSet = (enkiTaskSet*) pETS_->m_allocFunc(pETS_->m_userData, sizeof(enkiTaskSet));
+    new (taskSet) enkiTaskSet( taskFunc_ );
+    return taskSet;
 }
 
 void enkiDeleteTaskSet( enkiTaskSet* pTaskSet_ )
 {
-    delete pTaskSet_;
+		pTaskSet_->~enkiTaskSet();
+		pTaskSet_->owner->m_freeFunc(pTaskSet_->owner->m_userData, pTaskSet_);
 }
 
 void enkiSetPriorityTaskSet( enkiTaskSet* pTaskSet_, int priority_ )
@@ -120,12 +144,15 @@ int enkiIsTaskSetComplete( enkiTaskScheduler* pETS_, enkiTaskSet* pTaskSet_ )
 
 enkiPinnedTask* enkiCreatePinnedTask(enkiTaskScheduler* pETS_, enkiPinnedTaskExecute taskFunc_, uint32_t threadNum_)
 {
-    return new enkiPinnedTask( taskFunc_, threadNum_ );
+	enkiPinnedTask* pinnedTask = (enkiPinnedTask*) pETS_->m_allocFunc(pETS_->m_userData, sizeof(enkiPinnedTask));
+	new (pinnedTask) enkiPinnedTask( taskFunc_, threadNum_ );
+	return pinnedTask;
 }
 
 void enkiDeletePinnedTask(enkiPinnedTask* pTaskSet_)
 {
-    delete pTaskSet_;
+	pTaskSet_->~enkiPinnedTask();
+	pTaskSet_->owner->m_freeFunc(pTaskSet_->owner->m_userData, pTaskSet_);
 }
 
 void enkiSetPriorityPinnedTask( enkiPinnedTask* pTask_, int priority_ )

@@ -36,17 +36,21 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stddef.h>		// for size_t
 
-typedef struct enkiTaskScheduler enkiTaskScheduler;
-typedef struct enkiTaskSet       enkiTaskSet;
-typedef struct enkiPinnedTask    enkiPinnedTask;
+typedef struct enkiTaskScheduler *enkiTaskSchedulerHandle;
+typedef struct enkiTaskSet       *enkiTaskSetHandle;
+typedef struct enkiPinnedTask    *enkiPinnedTaskHandle;
+
+typedef void *(*enkiAllocFunc)(void *user, size_t size);
+typedef void (*enkiFreeFunc)(void *user, void *memory);
 
 typedef void (* enkiTaskExecuteRange)( uint32_t start_, uint32_t end, uint32_t threadnum_, void* pArgs_ );
 typedef void (* enkiPinnedTaskExecute)( void* pArgs_ );
 
 
 // Create a new task scheduler
-ENKITS_API enkiTaskScheduler*  enkiNewTaskScheduler();
+ENKITS_API enkiTaskScheduler*  enkiNewTaskScheduler(enkiAllocFunc allocFunc, enkiFreeFunc freeFunc, void* userData);
 
 // Initialize task scheduler - will create GetNumHardwareThreads()-1 threads, which is
 // sufficient to fill the system when including the main thread.

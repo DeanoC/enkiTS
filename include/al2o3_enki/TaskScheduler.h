@@ -46,6 +46,8 @@
 
 namespace enki
 {
+		typedef void *(*AllocFunc)(void *user, size_t size);
+		typedef void (*FreeFunc)(void *user, void *memory);
 
     struct TaskSetPartition
     {
@@ -192,7 +194,7 @@ namespace enki
     class TaskScheduler
     {
     public:
-        ENKITS_API TaskScheduler();
+        ENKITS_API TaskScheduler(AllocFunc allocFunc = nullptr, FreeFunc freeFunc = nullptr, void* userData = nullptr);
         ENKITS_API ~TaskScheduler();
 
         // Call either Initialize() or Initialize( numThreads_ ) before adding tasks.
@@ -278,7 +280,14 @@ namespace enki
         bool                                                     m_bHaveThreads;
         ProfilerCallbacks                                        m_ProfilerCallbacks;
 
-        TaskScheduler( const TaskScheduler& nocopy );
+    protected: // memory allocation are protected so the C API can use them
+				AllocFunc 																							 m_allocFunc;
+				FreeFunc 																								 m_freeFunc;
+				void* 																									 m_userData;
+				friend struct semaphoreid_t* SemaphoreCreate(TaskScheduler* owner);
+				friend void SemaphoreDelete( TaskScheduler* owner, struct semaphoreid_t* pSemaphore_);
+    private:
+			TaskScheduler( const TaskScheduler& nocopy );
         TaskScheduler& operator=( const TaskScheduler& nocopy );
     };
 
