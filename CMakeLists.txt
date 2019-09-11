@@ -28,7 +28,6 @@ set(Deps
         al2o3_platform
         al2o3_memory
         al2o3_tinystl)
-ADD_LIB(${LibName} "${Interface}" "${Src}" "${Deps}")
 
 if( ENKITS_BUILD_SHARED )
     add_library( enkiTS SHARED ${ENKITS_SRC} )
@@ -40,7 +39,7 @@ if( ENKITS_BUILD_SHARED )
     	endif()
 	endif ()
 else()
-    add_library( enkiTS STATIC ${ENKITS_SRC} )
+	ADD_LIB(${LibName} "${Interface}" "${Src}" "${Deps}")
 endif()
 
 
