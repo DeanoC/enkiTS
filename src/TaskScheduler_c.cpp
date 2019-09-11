@@ -29,6 +29,7 @@ struct enkiTaskScheduler : public TaskScheduler
 	using TaskScheduler::m_allocFunc;
 	using TaskScheduler::m_freeFunc;
 	using TaskScheduler::m_userData;
+	using TaskScheduler::TaskScheduler;
 };
 
 struct enkiTaskSet : ITaskSet
@@ -75,7 +76,8 @@ enkiTaskScheduler* enkiNewTaskScheduler(enkiAllocFunc allocFunc, enkiFreeFunc fr
 		if(freeFunc == nullptr) freeFunc = &DefaultFree;
 
     enkiTaskScheduler* pETS = (enkiTaskScheduler*) allocFunc(userData, sizeof(enkiTaskScheduler));
-    new(pETS) enkiTaskScheduler();
+    new(pETS) enkiTaskScheduler(allocFunc, freeFunc, userData);
+
 
     return pETS;
 }
