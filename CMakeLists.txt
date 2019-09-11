@@ -30,6 +30,20 @@ set(Deps
         al2o3_tinystl)
 ADD_LIB(${LibName} "${Interface}" "${Src}" "${Deps}")
 
+if( ENKITS_BUILD_SHARED )
+    add_library( enkiTS SHARED ${ENKITS_SRC} )
+    target_compile_definitions( enkiTS PRIVATE ENKITS_BUILD_DLL=1 )
+    target_compile_definitions( enkiTS INTERFACE ENKITS_DLL=1 )
+    if( UNIX )
+	    if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang") 
+	         SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden")
+    	endif()
+	endif ()
+else()
+    add_library( enkiTS STATIC ${ENKITS_SRC} )
+endif()
+
+
 if( ENKITS_TASK_PRIORITIES_NUM GREATER "0" )
     target_compile_definitions( ${LibName} PUBLIC "ENKITS_TASK_PRIORITIES_NUM=${ENKITS_TASK_PRIORITIES_NUM}" )
 endif()
